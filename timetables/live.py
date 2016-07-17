@@ -1,4 +1,5 @@
 import re
+import dateutil.parser
 from datetime import datetime, date
 
 import requests
@@ -149,6 +150,27 @@ class TransportApiDepartures(Departures):
         return ()
 
 
+class LambdaDepartures(Departures):
+    def get_row(self, item):
+        print item
+        return {
+            'time': dateutil.parser.parse(item.get('time')).replace(tzinfo=None),
+            'service': self.get_service(item.get('line')),
+            'destination': item.get('destination').split(',', 1)[0]
+        }
+
+    def get_response_args(self):
+        return ('https://syfh8cph90.execute-api.eu-west-1.amazonaws.com/prod/b', {
+            'stop': self.stop.atco_code
+        })
+
+    def departures_from_response(self, res):
+        departures = res.json()
+        if 'errorMessage' in departures:
+            return []
+        return [self.get_row(item) for item in departures]
+
+
 def get_max_age(departures, now):
     """
     Given a list of departures and the current datetime, returns a max_age in seconds
@@ -212,7 +234,7 @@ def get_departures(stop, services):
             }, 60)
 
     try:
-        departures = TransportApiDepartures(stop, services).get_departures()
+        departures = LambdaDepartures(stop, services).get_departures()
     except requests.exceptions.ConnectionError:
         departures = ()
     return ({
