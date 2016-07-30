@@ -1,8 +1,10 @@
 import os
+import zipfile
 import cPickle as pickle
 import xml.etree.cElementTree as ET
 from datetime import date, datetime
 from django.utils.dateparse import parse_duration
+from django.core.cache import cache
 
 DIR = os.path.dirname(__file__)
 NS = {
@@ -27,6 +29,12 @@ class Stop(object):
             return self.common_name
         else:
             return '%s %s' % (self.locality, self.common_name)
+
+    def is_at(self, locality_name):
+        if self.locality:
+            return locality_name in self.locality
+        if self.stop and self.stop.locality:
+            return locality_name in self.stop.locality.name
 
 
 class Row(object):
@@ -65,8 +73,9 @@ class Grouping(object):
     """Probably either "outbound" or "inbound".
     (Could perhaps be extended to group by weekends, bank holidays in the future)
     """
-    def __init__(self, direction):
+    def __init__(self, direction, service_description_parts):
         self.direction = direction
+        self.service_description_parts = service_description_parts
         self.column_heads = []
         self.column_feet = []
         self.journeys = []
@@ -77,6 +86,23 @@ class Grouping(object):
             if row.part.timingstatus == 'OTH':
                 return True
         return False
+
+    def starts_at(self, locality_name):
+        return self.rows[0].part.stop.is_at(locality_name)
+
+    def ends_at(self, locality_name):
+        return self.rows[-1].part.stop.is_at(locality_name)
+
+    def __unicode__(self):
+        if hasattr(self, 'service_description_parts') and self.service_description_parts:
+            start = self.service_description_parts[0]
+            end = self.service_description_parts[-1]
+            if self.starts_at(start) or self.ends_at(end):
+                return ' - '.join(self.service_description_parts)
+            elif self.starts_at(end) or self.ends_at(start):
+                self.service_description_parts.reverse()
+                return ' - '.join(self.service_description_parts)
+        return self.direction.capitalize()
 
 
 class JourneyPattern(object):
@@ -165,14 +191,18 @@ class JourneyPatternTimingLink(object):
 
 
 def get_deadruns(journey_element):
+    """Given a VehicleJourney element, returns a tuple
+    """
     start_element = journey_element.find('txc:StartDeadRun', NS)
     end_element = journey_element.find('txc:EndDeadRun', NS)
     return (get_deadrun_ref(start_element), get_deadrun_ref(end_element))
 
 
 def get_deadrun_ref(deadrun_element):
+    """Given a StartDeadRun or EndDeadRun element, returns the ID of a JourneyPetternTimingLink
+    """
     if deadrun_element is not None:
-        return deadrun_element.find('txc:ShortWorking', NS).find('txc:JourneyPatternTimingLinkRef', NS).text
+        return deadrun_element.find('txc:ShortWorking/txc:JourneyPatternTimingLinkRef', NS).text
 
 
 class VehicleJourney(object):
@@ -180,7 +210,7 @@ class VehicleJourney(object):
     A sort of "instance" of a JourneyPattern, made distinct by having its own start time,
     and possibly operating profile and dead run
     """
-    def __init__(self, element, journeypatterns, servicedorganisations):
+    def __init__(self, element, journeypatterns, servicedorgs):
         self.departure_time = datetime.strptime(
             element.find('txc:DepartureTime', NS).text, '%H:%M:%S'
         ).time()
@@ -205,7 +235,7 @@ class VehicleJourney(object):
 
         operatingprofile_element = element.find('txc:OperatingProfile', NS)
         if operatingprofile_element is not None:
-            self.operating_profile = OperatingProfile(operatingprofile_element, servicedorganisations)
+            self.operating_profile = OperatingProfile(operatingprofile_element, servicedorgs)
 
     def add_times(self):
         today = date.today()
@@ -259,7 +289,7 @@ class VehicleJourney(object):
             return True
         if str(self.operating_profile) == 'HolidaysOnlys':
             return False
-        if hasattr(self.operating_profile, 'nonoperation_days') and self.operating_profile is not None:
+        if hasattr(self.operating_profile, 'nonoperation_days'):
             for daterange in self.operating_profile.nonoperation_days:
                 if daterange.finishes_in_past() or daterange.starts_in_future():
                     return True
@@ -267,11 +297,35 @@ class VehicleJourney(object):
         return True
 
 
-# class ServicedOrganisation(object):
+class ServicedOrganisation(object):
+    def __init__(self, element, servicedorgs):
+        # Days of non-operation:
+        noop_element = element.find('txc:DaysOfNonOperation', NS)
+        if noop_element:
+            noop_hols_element = noop_element.find('txc:Holidays/txc:ServicedOrganisationRef', NS)
+            noop_workingdays_element = noop_element.find('txc:WorkingDays/txc:ServicedOrganisationRef', NS)
+
+            if noop_hols_element is not None:
+                self.nonoperation_holidays = noop_hols_element.text
+
+            if noop_workingdays_element is not None:
+                self.nonoperation_workingdays = noop_workingdays_element.text
+
+        # Days of operation:
+        op_element = element.find('txc:DaysOfOperation', NS)
+        if op_element:
+            op_hols_element = op_element.find('txc:Holidays/txc:ServicedOrganisationRef', NS)
+            op_workingdays_element = op_element.find('txc:WorkingDays/txc:ServicedOrganisationRef', NS)
+
+            if op_hols_element is not None:
+                self.operation_holidays = op_hols_element.text
+
+            if op_workingdays_element is not None:
+                self.operation_workingdays = op_workingdays_element.text
 
 
 class OperatingProfile(object):
-    def __init__(self, element, servicedorganisations):
+    def __init__(self, element, servicedorgs):
         element = element
 
         regular_days_element = element.find('txc:RegularDayType', NS)
@@ -282,6 +336,7 @@ class OperatingProfile(object):
         else:
             self.regular_days = [e.tag[33:] for e in week_days_element]
 
+        # Special Days:
 
         special_days_element = element.find('txc:SpecialDaysOperation', NS)
 
@@ -296,34 +351,12 @@ class OperatingProfile(object):
             if operation_days_element is not None:
                 self.operation_days = map(DateRange, operation_days_element.findall('txc:DateRange', NS))
 
+        # Serviced Organisation:
 
         servicedorg_days_element = element.find('txc:ServicedOrganisationDayType', NS)
+
         if servicedorg_days_element is not None:
-
-            # days of non operation
-            servicedorg_noop_element = servicedorg_days_element.find('txc:DaysOfNonOperation', NS)
-            if servicedorg_noop_element is not None:
-                noop_hols_element = servicedorg_noop_element.find('txc:Holidays', NS)
-                noop_workingdays_element = servicedorg_noop_element.find('txc:WorkingDays', NS)
-
-                if noop_hols_element is not None:
-                    self.servicedorganisation_nonoperation_holidays = noop_hols_element.find('txc:ServicedOrganisationRef', NS).text
-
-                if noop_workingdays_element is not None:
-                    self.servicedorganisation_nonoperation_workingdays = noop_workingdays_element.find('txc:ServicedOrganisationRef', NS).text
-
-            # days of operation
-            servicedorg_op_element = servicedorg_days_element.find('txc:DaysOfOperation', NS)
-            if servicedorg_op_element is not None:
-                op_hols_element = servicedorg_op_element.find('txc:Holidays', NS)
-                op_workingdays_element = servicedorg_op_element.find('txc:WorkingDays', NS)
-
-                if op_hols_element is not None:
-                    self.servicedorganisation_operation_holidays = op_hols_element.find('txc:ServicedOrganisationRef', NS).text
-
-                if op_workingdays_element is not None:
-                    self.servicedorganisation_operation_workingdays = op_workingdays_element.find('txc:ServicedOrganisationRef', NS).text
-
+            self.servicedorganisation = ServicedOrganisation(servicedorg_days_element, servicedorgs)
 
     def __str__(self):
         if self.regular_days:
@@ -350,14 +383,15 @@ class OperatingProfile(object):
         # if hasattr(self, 'operation_days'):
         #     string = string + '\n' + ', '.join(map(str, self.operation_days))
 
-        if hasattr(self, 'servicedorganisation_nonoperation_holidays'):
-            string += '\nSchool days'
-        if hasattr(self, 'servicedorganisation_operation_holidays'):
-            string += '\nSchool holidays'
-        if hasattr(self, 'servicedorganisation_nonoperation_workingdays'):
-            string += '\nSchool holidays'
-        if hasattr(self, 'servicedorganisation_operation_workingdays'):
-            string += '\nSchool days'
+        if hasattr(self, 'servicedorganisation'):
+            if hasattr(self.servicedorganisation, 'nonoperation_holidays'):
+                string += '\nSchool days'
+            if hasattr(self.servicedorganisation, 'operation_holidays'):
+                string += '\nSchool holidays'
+            if hasattr(self.servicedorganisation, 'nonoperation_workingdays'):
+                string += '\nSchool holidays'
+            if hasattr(self.servicedorganisation, 'operation_workingdays'):
+                string += '\nSchool days'
 
         return string
 
@@ -372,6 +406,9 @@ class OperatingProfile(object):
             if self.regular_days[0][:3] == 'Hol':
                 return 3
         return 0
+
+    def __eq__(self, other):
+        return str(self) == str(other)
 
     def __ne__(self, other):
         return str(self) != str(other)
@@ -410,7 +447,11 @@ class OperatingPeriod(DateRange):
                     start_format = '%-d %B'
             else:
                 start_format = '%-d %B %Y'
-            return 'from %s to %s' % (self.start.strftime(start_format), self.end.strftime('%-d %B %Y'))
+            return 'from %s to %s' % (
+                self.start.strftime(start_format), self.end.strftime('%-d %B %Y')
+            )
+        elif self.end is not None and self.end.year == date.today().year:
+            return self.end.strftime('until %-d %B %Y')
         return ''
 
 
@@ -430,8 +471,13 @@ class Timetable(object):
     def __init__(self, xml):
         today = date.today()
 
-        outbound_grouping = Grouping('outbound')
-        inbound_grouping = Grouping('inbound')
+        description_element = xml.find('txc:Services/txc:Service/txc:Description', NS)
+        if description_element is not None:
+            description_parts = description_element.text.split(' - ')
+        else:
+            description_parts = None
+        outbound_grouping = Grouping('outbound', description_parts)
+        inbound_grouping = Grouping('inbound', description_parts)
 
         stops = {
             element.find('txc:StopPointRef', NS).text: Stop(element)
@@ -449,7 +495,7 @@ class Timetable(object):
         servicedorganisations = xml.find('txc:ServicedOrganisations', NS)
 
         # time calculation begins here:
-        journeys = {
+        journeys_by_code = {
             journey.code: journey for journey in (
                 VehicleJourney(element, journeypatterns, servicedorganisations)
                 for element in xml.find('txc:VehicleJourneys', NS)
@@ -458,18 +504,18 @@ class Timetable(object):
 
         # some journeys did not have a direct reference to a journeypattern,
         # but rather a reference to another journey with a reference to a journeypattern
-        for journey in journeys.values():
+        for journey in journeys_by_code.values():
             if hasattr(journey, 'journeyref'):
-                journey.journeypattern = journeys[journey.journeyref].journeypattern
+                journey.journeypattern = journeys_by_code[journey.journeyref].journeypattern
 
-        journeys = filter(VehicleJourney.should_show, journeys.values())
+        journeys = [journey for journey in journeys_by_code.values() if journey.should_show()]
         journeys.sort(key=VehicleJourney.get_departure_time)
         journeys.sort(key=VehicleJourney.get_order)
         for journey in journeys:
             journey.journeypattern.grouping.journeys.append(journey)
             journey.add_times()
 
-        service_element = xml.find('txc:Services', NS).find('txc:Service', NS)
+        service_element = xml.find('txc:Services/txc:Service', NS)
         operatingprofile_element = service_element.find('txc:OperatingProfile', NS)
         if operatingprofile_element is not None:
             self.operating_profile = OperatingProfile(operatingprofile_element, servicedorganisations)
@@ -546,6 +592,7 @@ class Timetable(object):
 
 
 def abbreviate(grouping, i, in_a_row, difference):
+    """Given a Grouping, and a timedetlta, modifes each row and """
     grouping.rows[0].times[i - in_a_row - 2] = Cell(in_a_row + 1, len(grouping.rows), difference)
     for j in range(i - in_a_row - 1, i - 1):
         grouping.rows[0].times[j] = None
@@ -554,49 +601,84 @@ def abbreviate(grouping, i, in_a_row, difference):
             row.times[j] = None
 
 
-def get_filenames(service, path):
+def get_pickle_filenames(service, path):
+    """Given a Service and a folder path, returns a list of filenames
+    """
     if service.region_id == 'NE':
-        return (service.pk,)
-    elif service.region_id in ('S', 'NW'):
-        return ('SVR%s' % service.pk,)
+        return [service.pk]
+    if service.region_id in ('S', 'NW'):
+        return ['SVR%s' % service.pk]
+    try:
+        namelist = os.listdir(path)
+    except OSError:
+        return []
+    if service.net:
+        return [name for name in namelist if name.startswith('%s-' % service.pk)]
+    if service.region_id == 'GB':
+        parts = service.pk.split('_')
+        return [name for name in namelist if name.endswith('_%s_%s' % (parts[1], parts[0]))]
+    if service.region_id == 'Y':
+        return [
+            name for name in namelist
+            if name.startswith('SVR%s-' % service.pk) or name == 'SVR%s' % service.pk
+        ]
+    return [name for name in namelist if name.endswith('_%s' % service.pk)]
+
+
+def get_files_from_zipfile(service):
+    """Given a Service, returns an iterable of open files from the relevant zipfile
+    """
+    service_code = service.service_code
+    if service.region_id == 'GB':
+        archive_name = 'NCSD'
+        parts = service_code.split('_')
+        service_code = '_%s_%s' % (parts[-1], parts[-2])
     else:
-        try:
-            namelist = os.listdir(path)
-        except OSError:
-            return ()
-        if service.net:
-            return (name for name in namelist if name.startswith('%s-' % service.pk))
-        elif service.region_id == 'GB':
-            parts = service.pk.split('_')
-            return (name for name in namelist if name.endswith('_%s_%s' % (parts[1], parts[0])))
-        elif service.region_id == 'Y':
-            return (name for name in namelist if name.startswith('SVR%s-' % service.pk) or name == 'SVR%s' % service.pk)
-        else:
-            return (name for name in namelist if name.endswith('_%s' % service.pk))
+        archive_name = service.region_id
+    archive_path = os.path.join(DIR, '../data/TNDS/', archive_name + '.zip')
+    archive = zipfile.ZipFile(archive_path)
+    filenames = (name for name in archive.namelist() if service_code in name)
+
+    return (archive.open(filename) for filename in filenames)
 
 
-def timetable_from_filename(filename):
+def timetable_from_filename(path, filename):
+    """Given a path and filename, joins them, and returns a Timetable
+    """
     if filename[-4:] == '.xml':
-        with open(filename) as xmlfile:
+        with open(os.path.join(path, filename)) as xmlfile:
             xml = ET.parse(xmlfile).getroot()
         return Timetable(xml)
-    return unpickle_timetable(filename)
+    cache_prefix = 'GB' if 'NCSD' in path else path.split('/')[-2]
+    cache_key = '%s/%s' % (cache_prefix, filename.replace(' ', ''))
+    timetable = cache.get(cache_key)
+    if timetable is None:
+        timetable = unpickle_timetable(os.path.join(path, filename))
+        cache.set(cache_key, timetable)
+    return timetable
 
 
 def unpickle_timetable(filename):
+    """Given a filename, tries to open it and unpickle the contents,
+    or returns None on failure
+    """
     try:
         with open(filename) as open_file:
             return pickle.load(open_file)
     except IOError:
-        return None
+        return
 
 
 def timetable_from_service(service):
+    """Given a Service, returns a list of Timetables
+    """
     if service.region_id == 'GB':
         path = os.path.join(DIR, '../data/TNDS/NCSD/NCSD_TXC/')
     else:
         path = os.path.join(DIR, '../data/TNDS/%s/' % service.region_id)
 
-    filenames = get_filenames(service, path)
-    timetables = (timetable_from_filename(os.path.join(path, name)) for name in filenames)
-    return [timetable for timetable in timetables if timetable is not None]
+    filenames = get_pickle_filenames(service, path)
+    if filenames:
+        timetables = (timetable_from_filename(path, name) for name in filenames)
+        return [timetable for timetable in timetables if timetable is not None]
+    return [Timetable(ET.parse(file)) for file in get_files_from_zipfile(service)]

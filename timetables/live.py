@@ -1,15 +1,15 @@
 import re
-import dateutil.parser
-from datetime import datetime, date
-
+import datetime
 import requests
 import pytz
+import dateutil.parser
 from bs4 import BeautifulSoup
 from django.conf import settings
 from django.utils.text import slugify
 
 
 DESTINATION_REGEX = re.compile(r'.+\((.+)\)')
+LOCAL_TIMEZONE = pytz.timezone('Europe/London')
 
 
 class Departures(object):
@@ -42,14 +42,11 @@ class TflDepartures(Departures):
         return ('http://api.tfl.gov.uk/StopPoint/%s/arrivals' % self.stop.pk,)
 
     def departures_from_response(self, res):
-        timezone = pytz.timezone('Europe/London')
         return ({
-            'time': timezone.fromutc(
-                datetime.strptime(item.get('expectedArrival'), '%Y-%m-%dT%H:%M:%SZ')
-            ),
+            'time': dateutil.parser.parse(item.get('expectedArrival')).astimezone(LOCAL_TIMEZONE),
             'service': self.get_service(item.get('lineName')),
             'destination': item.get('destinationName'),
-        } for item in res.json()) if res.status_code == 200 else ()
+        } for item in res.json())
 
 
 class AcisDepartures(Departures):
@@ -65,9 +62,7 @@ class AcisLiveDepartures(AcisDepartures):
         })
 
     def departures_from_response(self, res):
-        if res.status_code != 200:
-            return ()
-        soup = BeautifulSoup(res.text, 'html.parser')
+        soup = BeautifulSoup(res.text, 'lxml')
         cells = [cell.text.strip() for cell in soup.find_all('td')]
         rows = (cells[i * 4 - 4:i * 4] for i in range(1, (len(cells) / 4) + 1))
         return ({
@@ -91,12 +86,10 @@ class AcisConnectDepartures(AcisDepartures):
         })
 
     def departures_from_response(self, res):
-        if res.status_code != 200:
-            return ()
-        soup = BeautifulSoup(res.text, 'html.parser')
+        soup = BeautifulSoup(res.text, 'lxml')
         table = soup.find(id='GridViewRTI')
         if table is None:
-            return ()
+            return
         rows = (row.findAll('td') for row in table.findAll('tr')[1:])
         if self.prefix == 'yorkshire':
             return ({
@@ -114,14 +107,18 @@ class AcisConnectDepartures(AcisDepartures):
 
 class TransportApiDepartures(Departures):
     def get_row(self, item):
+        today = datetime.date.today()
         time = item['best_departure_estimate']
         if time is None:
             return
         if 'date' in item:
-            departure_time = datetime.strptime(item['date'] + ' ' + time, '%Y-%m-%d %H:%M')
+            departure_time = dateutil.parser.parse(item['date'] + ' ' + time)
+            if departure_time.date() > today:
+                return
         else:
-            departure_time = datetime.strptime(time, '%H:%M').time()
-            departure_time = datetime.combine(date.today(), departure_time)
+            departure_time = datetime.datetime.combine(
+                today, dateutil.parser.parse(time).time()
+            )
         destination = item.get('direction')
         destination_matches = DESTINATION_REGEX.match(destination)
         if destination_matches is not None:
@@ -146,8 +143,7 @@ class TransportApiDepartures(Departures):
     def departures_from_response(self, res):
         departures = res.json().get('departures')
         if departures and 'all' in departures:
-            return filter(None, (self.get_row(item) for item in departures.get('all')))
-        return ()
+            return filter(None, map(self.get_row, departures['all']))
 
 
 class LambdaDepartures(Departures):
@@ -173,14 +169,19 @@ class LambdaDepartures(Departures):
 
 def get_max_age(departures, now):
     """
-    Given a list of departures and the current datetime, returns a max_age in seconds
-    (for use in a cache-control header)
+    Given a list of departures and the current datetime, returns an appropriate max_age in seconds
+    (for use in a cache-control header) (for costly Transport API departures)
     """
-    if len(departures) > 0:
-        expiry = departures[0]['time']
-        if now < expiry:
-            return (expiry - now).seconds + 60
-        return 60
+    if departures is not None:
+        if len(departures) > 0:
+            expiry = departures[0]['time']
+            if now < expiry:
+                return (expiry - now).seconds + 60
+            return 60
+        midnight = datetime.datetime.combine(
+            now.date() + datetime.timedelta(days=1), datetime.time(0)
+        )
+        return (midnight - now).seconds
     return 3600
 
 
@@ -194,7 +195,7 @@ def get_departures(stop, services):
     if 'TfL' in live_sources:
         return ({
             'departures': TflDepartures(stop, services),
-            'today': date.today(),
+            'today': datetime.date.today(),
             'source': {
                 'url': 'https://tfl.gov.uk/bus/stop/%s/%s' % (stop.atco_code, slugify(stop.common_name)),
                 'name': 'Transport for London'
@@ -233,12 +234,20 @@ def get_departures(stop, services):
                 }
             }, 60)
 
-    try:
-        departures = LambdaDepartures(stop, services).get_departures()
-    except requests.exceptions.ConnectionError:
-        departures = ()
+    if stop.pk.startswith('7000000'):
+        return ({
+            'departures': AcisConnectDepartures('belfast', stop, services),
+            'source': {
+                'url': 'http://belfast.acisconnect.com/Text/WebDisplay.aspx?stopRef=%s' % stop.pk,
+                'name': 'vixConnect'
+            }
+        }, 60)
+
+    # departures = TransportApiDepartures(stop, services).get_departures()
+    departures = LambdaDepartures(stop, services).get_departures()
+
     return ({
         'departures': departures,
-        'today': date.today(),
+        'today': datetime.date.today(),
         'source': None,
-    }, get_max_age(departures, datetime.now()))
+    }, get_max_age(departures, datetime.datetime.now()))

@@ -2,6 +2,7 @@
 """
 
 import os
+import sys
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -13,7 +14,7 @@ DEBUG = bool(os.environ.get('DEBUG', False))
 SERVER_EMAIL = 'contact@bustimes.org.uk'
 ADMINS = MANAGERS = (('Josh', 'contact@bustimes.org.uk'),)
 
-INSTALLED_APPS = (
+INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -23,7 +24,9 @@ INSTALLED_APPS = (
     'haystack',
     'busstops',
     'pipeline',
-)
+]
+if DEBUG and 'test' not in sys.argv and not bool(os.environ.get('TRAVIS')):
+    INSTALLED_APPS += ['debug_toolbar']
 
 ROOT_URLCONF = 'buses.urls'
 
@@ -45,6 +48,14 @@ HAYSTACK_CONNECTIONS = {
 }
 HAYSTACK_IDENTIFIER_METHOD = 'buses.utils.get_identifier'
 #  HAYSTACK_SIGNAL_PROCESSOR = 'haystack.signals.RealtimeSignalProcessor'
+
+if not DEBUG:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.memcached.MemcachedCache',
+            'LOCATION': '127.0.0.1:11211',
+        }
+    }
 
 DATABASES = {
     'default': {
@@ -108,7 +119,7 @@ TEMPLATES = [
         'OPTIONS': {
             'debug': DEBUG,
             'loaders': (
-                'template_minifier.template.loaders.app_directories.Loader' if DEBUG else (
+                'django.template.loaders.app_directories.Loader' if DEBUG else (
                     'django.template.loaders.cached.Loader', (
                         'template_minifier.template.loaders.app_directories.Loader',
                     )

@@ -158,7 +158,7 @@ class StopPoint(models.Model):
     objects = models.GeoManager()
 
     stop_area = models.ForeignKey(StopArea, null=True, editable=False)
-    locality = models.ForeignKey('Locality', editable=False)
+    locality = models.ForeignKey('Locality', null=True, editable=False)
     suburb = models.CharField(max_length=48, blank=True)
     town = models.CharField(max_length=48, blank=True)
     locality_centre = models.BooleanField()
@@ -210,7 +210,7 @@ class StopPoint(models.Model):
 
     timing_status = models.CharField(max_length=3, choices=TIMING_STATUS_CHOICES, blank=True)
 
-    admin_area = models.ForeignKey('AdminArea')
+    admin_area = models.ForeignKey('AdminArea', null=True)
     active = models.BooleanField(db_index=True)
 
     def __unicode__(self):
@@ -235,19 +235,20 @@ class StopPoint(models.Model):
         return headings.get(self.bearing)
 
     def get_qualified_name(self):
-        locality_name = unicode(self.locality).replace(' Town Centre', '').replace(' City Centre', '')
-        if locality_name.replace('\'', '').replace(u'\u2019', '') not in self.common_name.replace('\'', ''):
-            if self.indicator in ('opp', 'adj', 'at', 'o/s', 'nr', 'before', 'after', 'by', 'on', 'in'):
-                return '%s, %s %s' % (locality_name, self.indicator, self.common_name)
-            else:
-                return '%s %s' % (locality_name, unicode(self))
+        if self.locality is not None:
+            locality_name = unicode(self.locality).replace(' Town Centre', '').replace(' City Centre', '')
+            if locality_name.replace('\'', '').replace(u'\u2019', '') not in self.common_name.replace('\'', ''):
+                if self.indicator in ('opp', 'adj', 'at', 'o/s', 'nr', 'before', 'after', 'by', 'on', 'in'):
+                    return '%s, %s %s' % (locality_name, self.indicator, self.common_name)
+                else:
+                    return '%s %s' % (locality_name, unicode(self))
         return unicode(self)
 
     def get_absolute_url(self):
         return reverse('stoppoint-detail', args=(self.atco_code,))
 
 
-class Operator(models.Model):
+class Operator(models.Model, ValidateOnSaveMixin):
     "An entity that operates public transport services."
 
     id = models.CharField(max_length=10, primary_key=True)  # e.g. 'YCST'
@@ -312,8 +313,7 @@ class Service(models.Model):
         if self.line_name or self.line_brand or self.description:
             parts = (self.line_name, self.line_brand, self.description)
             return ' - '.join(part for part in parts if part != '')
-        else:
-            return self.service_code
+        return self.service_code
 
     def has_long_line_name(self):
         "Is this service's line_name more than 4 characters long?"
@@ -322,10 +322,9 @@ class Service(models.Model):
     def get_a_mode(self):
         if not self.mode:
             return 'A'
-        elif self.mode[0] == 'a':
+        if self.mode[0] == 'a':
             return 'An %s' % self.mode
-        else:
-            return 'A %s' % self.mode
+        return 'A %s' % self.mode
 
     def get_absolute_url(self):
         return reverse('service-detail', args=(self.service_code,))
@@ -334,29 +333,32 @@ class Service(models.Model):
     def get_operator_number(code):
         if code in ('MEGA', 'MBGD'):
             return '11'
-        elif code in ('NATX', 'NXSH', 'NXAP'):
+        if code in ('NATX', 'NXSH', 'NXAP'):
             return '12'
-        elif code == 'BHAT':
-            return '41'
-        elif code == 'ESYB':
-            return '53'
-        elif code == 'WAIR':
-            return '20'
-        elif code == 'TVSN':
-            return '18'
+        return {
+            'BHAT': '41',
+            'ESYB': '53',
+            'WAIR': '20',
+            'TVSN': '18'
+        }.get(code)
+
+    def get_tfl_url(self):
+        if self.mode == 'bus' and len(self.line_name) <= 4:
+            return 'https://tfl.gov.uk/bus/timetable/%s/' % self.line_name
+
+    def get_scotland_url(self):
+        return 'http://www.travelinescotland.com/pdfs/timetables/%s.pdf' % self.service_code
 
     def get_traveline_url(self):
-
         if self.region_id == 'S':
-            return 'http://www.travelinescotland.com/pdfs/timetables/%s.pdf' % self.service_code
+            return self.get_scotland_url()
 
         query = None
 
         if self.net != '':
             if self.net == 'tfl':
-                if self.mode == 'bus' and len(self.line_name) <= 4:
-                    return 'https://tfl.gov.uk/bus/timetable/%s/' % self.line_name
-                return None
+                return self.get_tfl_url()
+
             parts = self.service_code.split('-')
             query = [('line', parts[0].split('_')[-1].zfill(2) + parts[1].zfill(3)),
                      ('lineVer', self.line_ver or parts[4]),

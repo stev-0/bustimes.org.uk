@@ -10,7 +10,7 @@
 
 trap "echo Exited!; exit;" SIGINT SIGTERM
 
-if [ "$(ps -e | grep -c import.sh)" -gt 2 ]; then
+if [ "$(pgrep import.sh | wc -l)" -gt 2 ]; then
     echo "An import appears to be running already"
     exit 0
 fi
@@ -67,20 +67,22 @@ if [[ "$naptan_old" != "$naptan_new" ]]; then
     unzip -oq naptan.zip
 fi
 
-for file in *csv.zip; do
-    unzip -oq "$file" Stops.csv StopAreas.csv StopsInArea.csv
-    echo " $file"
-    echo "  Stops"
-    ../../manage.py import_stops < Stops.csv || exit
-    echo "  Stop areas"
-    ../../manage.py import_stop_areas < StopAreas.csv || exit
-done
-for file in *csv.zip; do
-    echo " $file"
-    echo "  Stops in area"
-    ../../manage.py import_stops_in_area < StopsInArea.csv || exit
-    rm "$file"
-done
+if compgen -G "*csv.zip" > /dev/null; then
+    for file in *csv.zip; do
+        unzip -oq "$file" Stops.csv StopAreas.csv StopsInArea.csv
+        echo " $file"
+        echo "  Stops"
+        tr -d '\000' < Stops.csv | ../../manage.py import_stops
+        echo "  Stop areas"
+        tr -d '\000' < StopAreas.csv | ../../manage.py import_stop_areas
+    done
+    for file in *csv.zip; do
+        echo " $file"
+        echo "  Stops in area"
+        tr -d '\000' < StopsInArea.csv |../../manage.py import_stops_in_area || continue
+        rm "$file"
+    done
+fi
 
 
 cd ..
@@ -103,7 +105,6 @@ if [[ $USERNAME == '' || $PASSWORD == '' ]]; then
 fi
 
 cd TNDS
-date=$(date +%Y-%m-%d)
 for region in "${REGIONS[@]}"; do
     region_old=$(ls -l $region.zip)
     wget -qN --user="$USERNAME" --password="$PASSWORD" ftp://ftp.tnds.basemap.co.uk/$region.zip
@@ -111,6 +112,7 @@ for region in "${REGIONS[@]}"; do
     if [[ $region_old != $region_new ]]; then
         # updated_services=1
         ../../manage.py import_services $region.zip
+        find $region -mtime +1 -delete
     fi
 done
 # [ $updated_services ] && ../../manage.py update_index --remove

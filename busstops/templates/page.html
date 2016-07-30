@@ -31,6 +31,7 @@
 <footer>
     {% block ad %}
     <div class="banner-ad" id="ad">
+    <ins class="adsbygoogle" data-ad-client="ca-pub-4420219114164200" data-ad-slot="5070920457" data-ad-format="auto"></ins>
     <script>
       (function(d, s) {
         var js = d.createElement(s);
@@ -40,7 +41,6 @@
         (adsbygoogle = window.adsbygoogle || []).push({});
       }(document, 'script'));
     </script>
-    <ins class="adsbygoogle" data-ad-client="ca-pub-4420219114164200" data-ad-slot="5070920457" data-ad-format="auto"></ins>
     </div>
     {% endblock %}
     <ul>
@@ -61,10 +61,10 @@ ga('create', 'UA-65987478-1', 'auto');
 ga('send', 'pageview');
 </script>
 {% if stopusages or stops or stoppoint %}
-<link rel="stylesheet" property="styleseet" href="{% static 'css/leaflet.css' %}" />
-<script src="{% static 'js/leaflet.js' %}"></script>
+<link rel="stylesheet" property="styleseet" href="{% static 'js/bower_components/leaflet/dist/leaflet.css' %}" />
+<script src="{% static 'js/bower_components/leaflet/dist/leaflet.js' %}"></script>
 <script async src="{% static 'js/map.js' %}"></script>
-{% if stoppoint and services %}
+{% if stoppoint and services or not stoppoint.locality %}
 <script src="{% static 'js/bower_components/reqwest/reqwest.min.js' %}"></script>
 <script async src="{% static 'js/departures.js' %}"></script>
 {% endif %}
