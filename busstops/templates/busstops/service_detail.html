@@ -38,7 +38,9 @@
     {% for row in grouping.rows %}
         <tr class="{{ row.part.timingstatus }}"><th>
         {% if row.part.stop.stop %}
-            <a href="{{ row.part.stop.stop.get_absolute_url }}">{{ row.part.stop.stop.get_qualified_name }}</a>
+            <a href="{{ row.part.stop.stop.get_absolute_url }}">
+                {{ row.part.stop.stop.get_qualified_name }}{% if row.part.activity == 'pickUp' %}<small>pick up only</small>{% elif row.part.activity == 'setDown' %}<small>set down only</small>{% endif %}
+            </a>
         {% else %}{{ row.part.stop }}{% endif %}
         </th>
         {% for cell in row.times %}

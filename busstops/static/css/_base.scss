@@ -477,13 +477,22 @@ input:not(:checked) + label {
 
         a {
             display: block;
+            float: left;
+            max-width: 60vw;
+            overflow: hidden;
             margin: -.25em -.5em;
             margin-left: 0;
             padding: .25em .5em;
             padding-left: 0;
-            max-width: 60vw;
-            overflow: hidden;
             text-overflow: ellipsis;
+            width: 100%
+        }
+
+        small {
+            color: #222;
+            display: inline-block;
+            font-size: .875em;
+            margin-left: .5em;
         }
     }
 
