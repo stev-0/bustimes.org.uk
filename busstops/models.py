@@ -102,6 +102,7 @@ class Locality(models.Model):
     parent = models.ForeignKey('Locality', models.SET_NULL, null=True, editable=False)
     latlong = models.PointField(null=True)
     adjacent = models.ManyToManyField('Locality', related_name='neighbour', blank=True)
+    slug = models.SlugField(default='')
 
     def __str__(self):
         return self.name
@@ -283,6 +284,7 @@ class Operator(ValidateOnSaveMixin, models.Model):
 
     id = models.CharField(max_length=10, primary_key=True)  # e.g. 'YCST'
     name = models.CharField(max_length=100, db_index=True)
+    slug = models.SlugField(default='')
     vehicle_mode = models.CharField(max_length=48, blank=True)
     parent = models.CharField(max_length=48, blank=True)
     region = models.ForeignKey(Region, models.CASCADE)
@@ -329,6 +331,7 @@ class Service(models.Model):
     service_code = models.CharField(max_length=24, primary_key=True)
     line_name = models.CharField(max_length=64, blank=True)
     line_brand = models.CharField(max_length=64, blank=True)
+    slug = models.SlugField(default='')
     description = models.CharField(max_length=255, blank=True)
     outbound_description = models.CharField(max_length=255, blank=True)
     inbound_description = models.CharField(max_length=255, blank=True)
