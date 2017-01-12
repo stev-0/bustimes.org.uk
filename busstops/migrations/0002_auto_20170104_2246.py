@@ -17,13 +17,13 @@ def forwards(apps, schema_editor):
     for operator in Operator.objects.using(db_alias).all():
         operator.slug = slugify(operator.name)
         if len(operator.slug) > 50:
-            print(operator)
+            print(operator.slug)
             operator.slug = operator.slug[:50]
         operator.save()
     for service in Service.objects.using(db_alias).all():
-        service.slug = slugify(' '.join(line_name, self.line_brand, self.description))
+        service.slug = slugify(' '.join((service.line_name, service.line_brand, service.description)))
         if len(service.slug) > 50:
-            print(service)
+            print(service.slug)
             service.slug = service.slug[:50]
         service.save()
 

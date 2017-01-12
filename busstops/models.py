@@ -10,6 +10,7 @@ from django.conf import settings
 from django.contrib.gis.db import models
 from django.urls import reverse
 from django.utils.encoding import python_2_unicode_compatible
+from django.utils.text import slugify
 from .utils import sign_url
 
 
@@ -25,6 +26,8 @@ SERVICE_ORDER_REGEX = re.compile(r'(\D*)(\d*)(\D*)')
 class ValidateOnSaveMixin(object):
     """https://www.xormedia.com/django-model-validation-on-save/"""
     def save(self, force_insert=False, force_update=False, **kwargs):
+        if not self.slug:
+            self.slug = slugify(str(self))
         if not (force_insert or force_update):
             self.full_clean()
         super(ValidateOnSaveMixin, self).save(force_insert, force_update, **kwargs)
