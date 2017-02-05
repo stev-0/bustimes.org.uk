@@ -434,14 +434,18 @@ class ServiceDetailView(DetailView):
         context['timetables'] = timetable_from_service(self.object, self.request.GET.get('date'))
         # context['timetables'].sort(key=lambda t: t.operating_period.start)
 
+        context['localities'] = Locality.objects.filter(stoppoint__service=self.object).distinct()
+
+        stops = self.object.stops.all().select_related('locality').defer('locality__latlong')
+        context['stops'] = stops
+
         if 'timetables' not in context or context['timetables'] == []:
             context['stopusages'] = self.object.stopusage_set.all().select_related(
                 'stop__locality'
             ).defer('stop__locality__latlong').order_by('direction', 'order')
             context['has_minor_stops'] = any(s.timing_status == 'OTH' for s in context['stopusages'])
         else:
-            stops_dict = {stop.pk: stop for stop in self.object.stops.all().select_related(
-                'locality').defer('latlong', 'locality__latlong')}
+            stops_dict = {stop.pk: stop for stop in stops}
             for table in context['timetables']:
                 table.groupings = [grouping for grouping in table.groupings if grouping.rows and grouping.rows[0].times]
                 for grouping in table.groupings:
