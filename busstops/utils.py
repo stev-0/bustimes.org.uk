@@ -109,25 +109,29 @@ def timetable_from_service(service, day=None):
     """Given a Service, return a list of Timetables."""
     if day is None:
         day = date.today()
-    cache_key = '{}{}'.format(service.pk, day)
-    timetables = cache.get(cache_key)
-    if timetables is not None:
-        return timetables
-    timetables = (txc.Timetable(xml_file, day, service.description) for xml_file in get_files_from_zipfile(service))
-    timetables = [timetable for timetable in timetables if hasattr(timetable, 'groupings')]
+    timetables = cache.get(service.pk)
+    if timetables is None:
+        timetables = [txc.Timetable(xml_file, day, service.description) for xml_file in get_files_from_zipfile(service)]
+        cache.set(service.pk, timetables, None)
+        for timetable in timetables:
+            # del timetable.journeypatterns
+            del timetable.stops
+            del timetable.operators
+            del timetable.element
+            if hasattr(timetable, 'groupings'):
+                for grouping in timetable.groupings:
+                    if grouping.rows and len(grouping.rows[0].times) > 60:
+                        service.show_timetable = False
+                        service.save()
+                        return
+    else:
+        for timetable in timetables:
+            timetable.set_date(day)
+    timetables = [timetable for timetable in timetables if timetable.operating_period.contains(timetable.date)]
     for timetable in timetables:
         for grouping in timetable.groupings:
-            if grouping.rows and len(grouping.rows[0].times) > 60:
-                service.show_timetable = False
-                service.save()
-                return
-            del grouping.journeys
-            del grouping.journeypatterns
-            for row in grouping.rows:
-                del row.next
-        del timetable.journeypatterns
-        del timetable.stops
-        del timetable.operators
-        del timetable.element
-    cache.set(cache_key, timetables, None)
-    return timetables
+            for journey in grouping.journeys:
+                if journey.should_show(timetable.date):
+                    journey.add_times()
+
+            grouping.do_heads_and_feet()

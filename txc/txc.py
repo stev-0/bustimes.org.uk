@@ -442,8 +442,6 @@ class VehicleJourney(object):
         operatingprofile_element = element.find('txc:OperatingProfile', NS)
         if operatingprofile_element is not None:
             self.operating_profile = OperatingProfile(operatingprofile_element, servicedorgs)
-            if not self.should_show(date):
-                return
 
         self.departure_time = datetime.datetime.strptime(
             element.find('txc:DepartureTime', NS).text, '%H:%M:%S'
@@ -750,8 +748,7 @@ class Timetable(object):
             if hasattr(journey, 'journeyref'):
                 journey.journeypattern = journeys[journey.journeyref].journeypattern
 
-        # return list(journeys.values())
-        return [journey for journey in iter(journeys.values()) if journey.should_show(self.date)]
+        return journeys.values()
 
     def date_options(self):
         start_date = min(self.date, datetime.date.today())
@@ -770,6 +767,12 @@ class Timetable(object):
                 'day': calendar.day_name[self.date.weekday()]
             }
 
+    def set_date(self, date):
+        if date and not isinstance(date, datetime.date):
+            self.date = datetime.datetime.strptime(date, '%Y-%m-%d').date()
+        else:
+            self.date = date
+
     def __init__(self, open_file, date, description=None):
         iterator = ET.iterparse(open_file)
 
@@ -778,10 +781,7 @@ class Timetable(object):
 
         self.description = description
 
-        if date and not isinstance(date, datetime.date):
-            self.date = datetime.datetime.strptime(date, '%Y-%m-%d').date()
-        else:
-            self.date = date
+        self.set_date(date)
 
         for _, element in iterator:
             tag = element.tag[33:]
@@ -827,8 +827,6 @@ class Timetable(object):
                                 self.date += datetime.timedelta(days=1)
 
                 self.operating_period = OperatingPeriod(element.find('txc:OperatingPeriod', NS))
-                if self.date and not self.operating_period.contains(self.date):
-                    return
 
                 self.service_code = element.find('txc:ServiceCode', NS).text
 
