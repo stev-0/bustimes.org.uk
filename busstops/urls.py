@@ -22,6 +22,7 @@ urlpatterns = [
     url(r'^operators/(?P<slug>[\w-]+)', views.OperatorDetailView.as_view(), name='operator-detail'),
     url(r'^services/(?P<pk>[^/]+)\.xml', views.service_xml),
     url(r'^services/(?P<pk>[^/]+)', views.ServiceDetailView.as_view(), name='service-detail'),
+    url(r'^journey', views.journey),
 ]
 
 if settings.DEBUG and hasattr(staticfiles, 'views'):

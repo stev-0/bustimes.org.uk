@@ -1,0 +1,19 @@
+{% extends 'page.html' %}
+
+{% block title %}{{ from }} to {{ to }} – Bus Times{% endblock %}
+
+{% block bodyclass %}narrow{% endblock %}
+
+{% block content %}
+
+<h1>{{ from.get_qualified_name }} to {{ to.get_qualified_name }}</h1>
+
+{% for route in plan.routes %}
+	{% for part in route.route_parts %}
+	<p><strong>{{ part.departure_time }}</strong> {{ part.from_point_name }}</p>
+	<p><strong>{{ part.arrival_time }}</strong> {{ part.to_point_name }}</p>
+	{% endfor %}
+	<hr />
+{% endfor %}
+
+{% endblock %}
