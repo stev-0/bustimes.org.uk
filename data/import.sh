@@ -46,7 +46,7 @@ nptg_old=$(shasum nptg.ashx\?format=csv)
 wget -qN http://naptan.app.dft.gov.uk/datarequest/nptg.ashx?format=csv
 nptg_new=$(shasum nptg.ashx\?format=csv)
 
-if [[ $nptg_old != $nptg_new ]]; then
+if [[ $nptg_old != $nptg_new ]] || [[ -z nptg_old ]]; then
     echo "NPTG"
     echo "  Importing regions"
     import_csv nptg.ashx\?format=csv regions Regions.csv
@@ -78,7 +78,7 @@ naptan_old=$(shasum naptan.zip)
 ../../manage.py update_naptan
 naptan_new=$(shasum naptan.zip)
 
-if [[ "$naptan_old" != "$naptan_new" ]]; then
+if [[ "$naptan_old" != "$naptan_new" ]] || [[ -z $naptan_old ]]; then
     echo "NaPTAN"
     unzip -oq naptan.zip
 fi
@@ -110,7 +110,7 @@ cd ..
 noc_old=$(ls -l NOC_DB.csv)
 wget -qN http://mytraveline.info/NOC/NOC_DB.csv
 noc_new=$(ls -l NOC_DB.csv)
-if [[ $noc_old != $noc_new ]]; then
+if [[ $noc_old != $noc_new ]] || [[ -z $noc_old ]]; then
     wget -qN www.travelinedata.org.uk/noc/api/1.0/nocrecords.xml
     ../manage.py import_operators < NOC_DB.csv
     ../manage.py import_operator_contacts < nocrecords.xml
@@ -131,7 +131,7 @@ for region in "${REGIONS[@]}"; do
     region_old=$(ls -l "$region.zip")
     wget -qN --user="$USERNAME" --password="$PASSWORD" "ftp://ftp.tnds.basemap.co.uk/$region.zip"
     region_new=$(ls -l "$region.zip")
-    if [[ $region_old != $region_new ]]; then
+    if [[ $region_old != $region_new ]] || [[ -z $region_old ]] ; then
         s3cmd put "$region.zip" "s3://bustimes-backup/$region-$date.zip"
         # updated_services=1
         ../../manage.py import_services "$region.zip"
