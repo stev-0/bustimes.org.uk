@@ -9,6 +9,7 @@ multigtfs==1.1.1
 psycopg2==2.7.3
 python-dateutil==2.6.1
 pytz==2017.2
+PyYAML==3.11.0
 raven==6.1.0
 requests==2.18.4
 titlecase==0.11.0
