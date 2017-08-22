@@ -282,6 +282,11 @@ class StopPoint(models.Model):
                 return sign_url(url, settings.STREETVIEW_SECRET)
             return url
 
+    def get_region(self):
+        if self.admin_area_id:
+            return self.admin_area.region
+        return Region.objects.filter(service__stops=self).first()
+
     def get_absolute_url(self):
         return reverse('stoppoint-detail', args=(self.atco_code,))
 
@@ -308,6 +313,9 @@ class Operator(ValidateOnSaveMixin, models.Model):
 
     def get_absolute_url(self):
         return reverse('operator-detail', args=(self.slug or self.id,))
+
+    def mode(self):
+        return self.vehicle_mode
 
     def get_a_mode(self):
         """Return the the name of the operator's vehicle mode,
